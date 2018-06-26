@@ -70,8 +70,19 @@ static u8_t discover_func(struct bt_conn *conn,
 	printk("[ATTRIBUTE] handle %u\n", attr->handle);
 
 	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_NUS)) {
-  	printk("BT_UUID_NUS found\n");
-    memcpy(&nus_uuid, BT_UUID_NUS_TX, sizeof(nus_uuid));
+  	    printk("BT_UUID_NUS found\n");
+        memcpy(&nus_uuid, BT_UUID_NUS_RX, sizeof(nus_uuid));
+		discover_params.uuid = &nus_uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_NUS_RX)) {
+  	    printk("BT_UUID_NUS_RX found\n");
+        memcpy(&nus_uuid, BT_UUID_NUS_TX, sizeof(nus_uuid));
 		discover_params.uuid = &nus_uuid.uuid;
 		discover_params.start_handle = attr->handle + 1;
 		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
@@ -81,8 +92,8 @@ static u8_t discover_func(struct bt_conn *conn,
 			printk("Discover failed (err %d)\n", err);
 		}
 	} else if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_NUS_TX)) {
-  	printk("BT_UUID_NUS_TX found\n");
-    struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
+      	printk("BT_UUID_NUS_TX found\n");
+        struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 		memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
 		discover_params.uuid = &uuid.uuid;
 		discover_params.start_handle = attr->handle + 2;
@@ -94,7 +105,7 @@ static u8_t discover_func(struct bt_conn *conn,
 			printk("Discover failed (err %d)\n", err);
 		}
 	} else {
-  	printk("BT_UUID_GATT_CCC found\n");
+  	    printk("BT_UUID_GATT_CCC found\n");
 		subscribe_params.notify = notify_func;
 		subscribe_params.value = BT_GATT_CCC_NOTIFY;
 		subscribe_params.ccc_handle = attr->handle;
