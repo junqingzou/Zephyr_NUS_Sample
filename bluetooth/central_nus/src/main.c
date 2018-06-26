@@ -22,6 +22,18 @@
 #include <misc/byteorder.h>
 #include <gatt/nus.h>
 
+/* AUTH_NUMERIC_COMPARISON result in in LESC Numeric Comparison authentication
+ * Undefine this result in LESC Passkey Input
+ */
+#define AUTH_NUMERIC_COMPARISON
+
+/** Start security procedure from Peripheral to NUS Central on nRF5 or SmartPhone */
+/** BT_SECURITY_LOW(1)     No encryption and no authentication. */
+/** BT_SECURITY_MEDIUM(2)  Encryption and no authentication (no MITM). */
+/** BT_SECURITY_HIGH(3)    Encryption and authentication (MITM). */
+/** BT_SECURITY_FIPS(4)    Authenticated Secure Connections */
+#define BT_SECURITY     BT_SECURITY_FIPS
+
 static struct bt_conn *default_conn;
 
 static struct bt_uuid_128 nus_uuid = BT_UUID_INIT_128(0);
@@ -103,7 +115,6 @@ static u8_t discover_func(struct bt_conn *conn,
 static void connected(struct bt_conn *conn, u8_t conn_err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
-	int err;
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -114,6 +125,7 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 
 	printk("Connected: %s\n", addr);
 
+#if 0
 	if (conn == default_conn) {
     memcpy(&nus_uuid, BT_UUID_NUS, sizeof(nus_uuid));
 		discover_params.uuid = &nus_uuid.uuid;
@@ -122,12 +134,13 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 		discover_params.end_handle = 0xffff;
 		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-		err = bt_gatt_discover(default_conn, &discover_params);
+		int err = bt_gatt_discover(default_conn, &discover_params);
 		if (err) {
 			printk("Discover failed(err %d)\n", err);
 			return;
 		}
 	}
+#endif
 }
 
 static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
@@ -135,7 +148,7 @@ static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
 {
 	bt_addr_le_t *addr = user_data;
 
-  printk("[AD]: %u data_len %u\n", type, data_len);
+  //printk("[AD]: %u data_len %u\n", type, data_len);
 
 	switch (type) {
 	case BT_DATA_UUID128_SOME:
@@ -236,10 +249,157 @@ static void disconnected(struct bt_conn *conn, u8_t reason)
 	}
 }
 
+#if defined(CONFIG_BT_SMP)
+static void identity_resolved(struct bt_conn *conn, const bt_addr_le_t *rpa,
+			      const bt_addr_le_t *identity)
+{
+	char addr_identity[BT_ADDR_LE_STR_LEN];
+	char addr_rpa[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(identity, addr_identity, sizeof(addr_identity));
+	bt_addr_le_to_str(rpa, addr_rpa, sizeof(addr_rpa));
+
+	printk("Identity resolved %s -> %s\n", addr_rpa, addr_identity);
+}
+
+static void security_changed(struct bt_conn *conn, bt_security_t level)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Security changed: %s level %u\n", addr, level);
+
+	if (level == BT_SECURITY_FIPS && conn == default_conn) {
+        memcpy(&nus_uuid, BT_UUID_NUS, sizeof(nus_uuid));
+		discover_params.uuid = &nus_uuid.uuid;
+		discover_params.func = discover_func;
+		discover_params.start_handle = 0x0001;
+		discover_params.end_handle = 0xffff;
+		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+		int err = bt_gatt_discover(default_conn, &discover_params);
+		if (err) {
+			printk("Discover failed(err %d)\n", err);
+			return;
+		}
+	}
+}
+#endif /* defined(CONFIG_BT_SMP) */
+
 static struct bt_conn_cb conn_callbacks = {
-	.connected = connected,
-	.disconnected = disconnected,
+	.connected          = connected,
+	.disconnected       = disconnected,
+	.le_param_req       = NULL,
+	.le_param_updated   = NULL,
+#if defined(CONFIG_BT_SMP)
+	.identity_resolved  = identity_resolved,
+	.security_changed   = security_changed
+#endif /* defined(CONFIG_BT_SMP) */
 };
+
+static void auth_cancel(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Pairing cancelled: %s\n", addr);
+}
+
+static void auth_pairing_confirm(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	int err;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Pairing Confirm for %s\n", addr);
+  if (conn == default_conn)
+  {
+    err = bt_conn_auth_pairing_confirm(conn);
+  	if (err) {
+      printk("Confirm failed(err %d)\n", err);
+    }
+    else
+    {
+  	  printk("Confirmed!\n");
+  	}
+  }
+}
+
+static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Passkey Display for %s: %06u\n", addr, passkey);
+}
+
+static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	int err;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Passkey Confirm for %s: %06u\n", addr, passkey);
+  if (conn == default_conn)
+  {
+    err = bt_conn_auth_passkey_confirm(conn);
+  	if (err) {
+      printk("Confirm failed(err %d)\n", err);
+    }
+    else
+    {
+  	  printk("Confirmed!\n");
+  	}
+  }
+}
+
+#if defined(AUTH_NUMERIC_COMPARISON)
+/* result in DISPLAY_YESNO and Numeric Comparison
+ * check bt_conn_get_io_capa() in subsys/bluetooth/host/conn.c
+ */
+static struct bt_conn_auth_cb auth_cb_display_yesno = {
+	.passkey_display    = auth_passkey_display,
+	.passkey_entry      = NULL,
+	.passkey_confirm    = auth_passkey_confirm,
+	.cancel             = auth_cancel,
+	.pairing_confirm    = auth_pairing_confirm
+};
+
+#else
+static void auth_passkey_entry(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	int err;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Pairing entry for %s\n", addr);
+  if (conn == default_conn)
+  {
+    err = bt_conn_auth_passkey_entry(conn, 0x12345);
+  	if (err) {
+      printk("Entry failed(err %d)\n", err);
+    }
+    else
+    {
+  	  printk("Entered!\n");
+  	}
+  }
+}
+
+/* result in KEYBOARD and Passkey Input
+ * check bt_conn_get_io_capa() in subsys/bluetooth/host/conn.c
+ */
+static struct bt_conn_auth_cb auth_cb_disaply_keyboard = {
+	.passkey_display    = auth_passkey_display,
+	.passkey_entry      = auth_passkey_entry,
+	.passkey_confirm    = auth_passkey_confirm,
+	.cancel             = auth_cancel,
+	.pairing_confirm    = auth_pairing_confirm
+};
+#endif
 
 void main(void)
 {
@@ -254,7 +414,11 @@ void main(void)
 	printk("Bluetooth initialized\n");
 
 	bt_conn_cb_register(&conn_callbacks);
-
+#if defined(AUTH_NUMERIC_COMPARISON)
+	bt_conn_auth_cb_register(&auth_cb_display_yesno);
+#else
+	bt_conn_auth_cb_register(&auth_cb_disaply_keyboard);
+#endif
 	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
 
 	if (err) {
